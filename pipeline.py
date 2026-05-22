@@ -5,10 +5,11 @@ Pipeline Orchestrator — now with SentenceGrouper stage.
 
 Updated architecture:
 
-  AudioCapture  ──[audio_q]──▶  STTEngine
-  STTEngine     ──[stt_q]──▶    SentenceGrouper   ← NEW
-  Grouper       ──[group_q]──▶  TranslatorModule
-  Translator    ──[trans_q]──▶  SubtitleFormatter
+  AudioCapture  ──[pcm_q]──▶    DeepgramSTT (live)
+  DeepgramSTT   ──[stt_q]──▶    SentenceGrouper
+  Grouper       ──[group_q]──▶  TranslationBatcher
+  Batcher       ──[batch_q]──▶  TranslatorModule (Ollama)
+  Ollama        ──[trans_q]──▶  SubtitleFormatter
   Formatter     ──[disp_q]──▶   UI (Tkinter via callback)
 
 Each module runs as a separate asyncio Task inside a shared event
@@ -27,8 +28,9 @@ from typing import Callable, Optional
 from config import AppConfig
 from modules.audio_capture import AudioCaptureModule
 from modules.sentence_grouper import SentenceGrouperModule
-from modules.stt_engine import STTEngine
+from modules.deepgram_stt import DeepgramSTTEngine
 from modules.subtitle_formatter import DisplaySubtitle, SubtitleFormatterModule
+from modules.translation_batcher import TranslationBatcherModule
 from modules.translator import TranslatorModule
 from utils.logger import get_logger
 
@@ -83,14 +85,16 @@ class SubtitlePipeline:
         # Asyncio inter-module queues (created in start())
         self._audio_q:  Optional[asyncio.Queue] = None
         self._stt_q:    Optional[asyncio.Queue] = None
-        self._group_q:  Optional[asyncio.Queue] = None   # NEW
+        self._group_q:  Optional[asyncio.Queue] = None
+        self._batch_q:  Optional[asyncio.Queue] = None
         self._trans_q:  Optional[asyncio.Queue] = None
         self._disp_q:   Optional[asyncio.Queue] = None
 
         # Modules
         self._audio_mod:  Optional[AudioCaptureModule]      = None
-        self._stt_mod:    Optional[STTEngine]               = None
-        self._group_mod:  Optional[SentenceGrouperModule]   = None   # NEW
+        self._stt_mod:    Optional[DeepgramSTTEngine]       = None
+        self._group_mod:  Optional[SentenceGrouperModule]   = None
+        self._batch_mod:  Optional[TranslationBatcherModule] = None
         self._trans_mod:  Optional[TranslatorModule]        = None
         self._fmt_mod:    Optional[SubtitleFormatterModule] = None
 
@@ -152,31 +156,46 @@ class SubtitlePipeline:
         # ── Create queues ────────────────────────────────────
         self._audio_q = asyncio.Queue(maxsize=pcfg.audio_queue_maxsize)
         self._stt_q   = asyncio.Queue(maxsize=pcfg.stt_queue_maxsize)
-        self._group_q = asyncio.Queue(maxsize=pcfg.stt_queue_maxsize)   # same size as stt
+        self._group_q = asyncio.Queue(maxsize=pcfg.stt_queue_maxsize)
+        self._batch_q = asyncio.Queue(maxsize=pcfg.translation_queue_maxsize)
         self._trans_q = asyncio.Queue(maxsize=pcfg.translation_queue_maxsize)
         self._disp_q  = asyncio.Queue(maxsize=pcfg.subtitle_queue_maxsize)
 
         # ── Instantiate modules ──────────────────────────────
         self._audio_mod = AudioCaptureModule(cfg.audio)
-        self._stt_mod   = STTEngine(cfg.stt)
+        self._stt_mod   = DeepgramSTTEngine(cfg.stt)
+        gcfg = cfg.grouper
         self._group_mod = SentenceGrouperModule(
-            max_wait_s      = 1.8,
-            gap_threshold_s = 1.0,
-            max_words       = 35,
+            max_wait_s=gcfg.max_wait_s,
+            gap_threshold_s=gcfg.gap_threshold_s,
+            max_words=gcfg.max_words,
+            flush_on_gap=gcfg.flush_on_gap,
         )
+        self._batch_mod = TranslationBatcherModule(cfg.translation)
         self._trans_mod = TranslatorModule(cfg.translation, context_window=2)
         self._fmt_mod   = SubtitleFormatterModule(cfg.subtitle)
 
-        # ── Load STT model ───────────────────────────────────
-        self._status_cb("STTEngine", "Loading model …")
+        # ── Validate cloud APIs ───────────────────────────────
+        self._status_cb("Deepgram", "Checking …")
         try:
-            await asyncio.get_event_loop().run_in_executor(
-                None, self._stt_mod.load
-            )
-            self._status_cb("STTEngine", "Ready ✔")
+            self._stt_mod.validate()
+            self._status_cb("Deepgram", "Ready ✔")
         except Exception as exc:
-            log.error(f"STT model failed to load: {exc}")
-            self._status_cb("STTEngine", f"Error: {exc}")
+            log.error(f"Deepgram STT setup failed: {exc}")
+            self._status_cb("Deepgram", f"Error: {exc}")
+            self.state = PipelineState.ERROR
+            return
+
+        self._status_cb("Ollama", "Checking …")
+        try:
+            self._trans_mod.validate()
+            if cfg.translation.preload_on_start:
+                self._status_cb("Ollama", "Preloading model …")
+                await self._trans_mod.preload()
+            self._status_cb("Ollama", "Ready ✔")
+        except Exception as exc:
+            log.error(f"Ollama translator setup failed: {exc}")
+            self._status_cb("Ollama", f"Error: {exc}")
             self.state = PipelineState.ERROR
             return
 
@@ -195,19 +214,25 @@ class SubtitlePipeline:
                     self._audio_q, self._stt_q,
                     self._stop_event, self._transcript_cb,
                 ),
-                name="STT",
+                name="Deepgram",
             ),
-            asyncio.create_task(                                    # NEW
+            asyncio.create_task(
                 self._group_mod.run(
                     self._stt_q, self._group_q, self._stop_event
                 ),
                 name="Grouper",
             ),
             asyncio.create_task(
-                self._trans_mod.run(
-                    self._group_q, self._trans_q, self._stop_event  # was stt_q
+                self._batch_mod.run(
+                    self._group_q, self._batch_q, self._stop_event
                 ),
-                name="Translator",
+                name="Batcher",
+            ),
+            asyncio.create_task(
+                self._trans_mod.run(
+                    self._batch_q, self._trans_q, self._stop_event
+                ),
+                name="Ollama",
             ),
             asyncio.create_task(
                 self._fmt_mod.run(

@@ -54,6 +54,12 @@ FONT_MONO = ("Consolas", 10) if sys.platform == "win32" else ("Menlo", 10)
 FONT_UI   = ("Segoe UI", 10) if sys.platform == "win32" else ("SF Pro Display", 10)
 FONT_BIG  = ("Segoe UI Semibold", 12) if sys.platform == "win32" else ("SF Pro Display", 12)
 
+# Light inputs — readable on Windows ttk (avoid white-on-white combobox)
+INPUT_BG = "#F5F5F5"
+INPUT_FG = "#111111"
+WIN_W, WIN_H = 980, 520
+WIN_MIN_W, WIN_MIN_H = 860, 480
+
 
 # ─────────────────────────────────────────────────────────────
 #  SUBTITLE OVERLAY WINDOW
@@ -368,7 +374,8 @@ class ControlPanel:
         self._root = tk.Tk()
         self._root.title("🎬 AI Subtitle Agent — EN → VI")
         self._root.configure(bg=DARK)
-        self._root.resizable(False, False)
+        self._root.minsize(WIN_MIN_W, WIN_MIN_H)
+        self._root.resizable(True, True)
 
         self._apply_theme()
 
@@ -386,6 +393,12 @@ class ControlPanel:
         style = ttk.Style(self._root)
         style.theme_use("clam")
 
+        # Dropdown list (popdown) — black text on white background
+        self._root.option_add("*TCombobox*Listbox.background", INPUT_BG)
+        self._root.option_add("*TCombobox*Listbox.foreground", INPUT_FG)
+        self._root.option_add("*TCombobox*Listbox.selectBackground", ACCENT)
+        self._root.option_add("*TCombobox*Listbox.selectForeground", INPUT_FG)
+
         style.configure("TFrame",          background=PANEL)
         style.configure("Card.TFrame",     background=CARD)
         style.configure("TLabel",          background=PANEL, foreground=TEXT,
@@ -394,10 +407,27 @@ class ControlPanel:
                          font=(FONT_BIG[0], 14, "bold"))
         style.configure("Muted.TLabel",    background=CARD, foreground=MUTED,
                          font=(FONT_UI[0], 9))
-        style.configure("TCombobox",       fieldbackground=CARD, background=CARD,
-                         foreground=TEXT, selectbackground=ACCENT)
-        style.configure("TEntry",          fieldbackground=CARD, foreground=TEXT,
-                         insertcolor=TEXT)
+        style.configure(
+            "TCombobox",
+            fieldbackground=INPUT_BG,
+            background=INPUT_BG,
+            foreground=INPUT_FG,
+            arrowcolor=INPUT_FG,
+            selectbackground=ACCENT,
+            selectforeground=INPUT_FG,
+        )
+        style.map(
+            "TCombobox",
+            fieldbackground=[("readonly", INPUT_BG), ("disabled", BORDER)],
+            foreground=[("readonly", INPUT_FG), ("disabled", MUTED)],
+            background=[("readonly", INPUT_BG), ("active", INPUT_BG)],
+        )
+        style.configure(
+            "TEntry",
+            fieldbackground=INPUT_BG,
+            foreground=INPUT_FG,
+            insertcolor=INPUT_FG,
+        )
         style.configure("TCheckbutton",    background=CARD, foreground=TEXT)
         style.configure("TScale",          background=CARD, troughcolor=BORDER)
 
@@ -450,7 +480,7 @@ class ControlPanel:
         tk.Frame(root, bg=BORDER, height=1).pack(fill="x")
 
         # ── Main content ──────────────────────────────────────
-        body = tk.Frame(root, bg=DARK, padx=16, pady=12)
+        body = tk.Frame(root, bg=DARK, padx=12, pady=8)
         body.pack(fill="both", expand=True)
 
         left  = tk.Frame(body, bg=DARK)
@@ -494,9 +524,38 @@ class ControlPanel:
         )
         self._pipeline_status.pack(side="right", padx=8)
 
-        # ── Log pane ──────────────────────────────────────────
-        self._build_transcript_pane(root)
-        self._build_log_pane(root)
+        # ── HEARD + LOG (side by side — shorter window) ───────
+        bottom = tk.Frame(root, bg=DARK, padx=12, pady=8)
+        bottom.pack(fill="both", expand=True)
+        bottom.columnconfigure(0, weight=1)
+        bottom.columnconfigure(1, weight=1)
+        bottom.rowconfigure(0, weight=1)
+
+        heard_col = tk.Frame(bottom, bg=DARK)
+        log_col = tk.Frame(bottom, bg=DARK)
+        heard_col.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
+        log_col.grid(row=0, column=1, sticky="nsew", padx=(6, 0))
+
+        self._build_transcript_pane(heard_col)
+        self._build_log_pane(log_col)
+
+        self._center_window(WIN_W, WIN_H)
+
+    def _center_window(self, width: int, height: int) -> None:
+        self._root.update_idletasks()
+        sw = self._root.winfo_screenwidth()
+        sh = self._root.winfo_screenheight()
+        x = max(0, (sw - width) // 2)
+        y = max(0, (sh - height) // 2)
+        self._root.geometry(f"{width}x{height}+{x}+{y}")
+
+    @staticmethod
+    def _style_combobox(combo: ttk.Combobox) -> None:
+        """Ensure combobox entry uses dark text (Windows clam theme)."""
+        try:
+            combo.configure(style="TCombobox")
+        except tk.TclError:
+            pass
 
     def _scan_audio_devices(self) -> list[str]:
         """Dùng FFmpeg để liệt kê tất cả thiết bị audio trên Windows."""
@@ -516,26 +575,13 @@ class ControlPanel:
             log.warning(f"Could not scan audio devices: {exc}")
         return devices
     
-    def _scan_ollama_models(self) -> list[str]:
-        """Lấy danh sách model đang có trong Ollama."""
-        try:
-            import urllib.request, json
-            url = f"{self._ollama_url_var.get().rstrip('/')}/api/tags"
-            with urllib.request.urlopen(url, timeout=5) as r:
-                data = json.loads(r.read())
-                models = [m["name"] for m in data.get("models", [])]
-                return models if models else []
-        except Exception as exc:
-            log.warning(f"Could not scan Ollama models: {exc}")
-            return []
-
     def _card(self, parent: tk.Widget, title: str) -> tk.Frame:
         outer = tk.Frame(parent, bg=DARK, pady=4)
         outer.pack(fill="x")
         tk.Label(outer, text=title, bg=DARK, fg=MUTED, font=(FONT_UI[0], 9, "bold")).pack(
             anchor="w"
         )
-        inner = tk.Frame(outer, bg=CARD, padx=12, pady=10)
+        inner = tk.Frame(outer, bg=CARD, padx=10, pady=8)
         inner.pack(fill="x", pady=(2, 0))
         return inner
 
@@ -559,6 +605,7 @@ class ControlPanel:
             values=["mic", "system", "file", "stream"],
             state="readonly", width=14
         )
+        self._style_combobox(combo)
         combo.pack(side="left")
         combo.bind("<<ComboboxSelected>>", self._on_source_change)
 
@@ -579,6 +626,7 @@ class ControlPanel:
             self._device_row, textvariable=self._audio_device_var,
             state="readonly", width=30
         )
+        self._style_combobox(self._audio_device_combo)
         self._audio_device_combo.pack(side="left")
         self._audio_device_combo.bind("<<ComboboxSelected>>", self._on_device_selected)
 
@@ -591,14 +639,6 @@ class ControlPanel:
         self._toggle_path_row()
         # Scan devices in background on startup
         self._root.after(500, self._refresh_devices)
-
-        noise_row = self._row(card, "Noise filter")
-        self._noise_var = tk.BooleanVar(value=True)
-        tk.Checkbutton(
-            noise_row, text="DeepFilterNet",
-            variable=self._noise_var, bg=CARD, fg=TEXT,
-            selectcolor=CARD, activebackground=CARD, activeforeground=ACCENT,
-        ).pack(side="left")
 
     def _on_source_change(self, _event=None) -> None:
         self._toggle_path_row()
@@ -644,26 +684,71 @@ class ControlPanel:
         selected = self._audio_device_var.get()
         self._path_var.set(selected)
     
+    def _scan_ollama_models(self) -> list[str]:
+        """List models installed in Ollama."""
+        try:
+            import urllib.request
+            import json
+            url = f"{self._ollama_url_var.get().rstrip('/')}/api/tags"
+            with urllib.request.urlopen(url, timeout=5) as r:
+                data = json.loads(r.read())
+                models = [m["name"] for m in data.get("models", [])]
+                return models if models else []
+        except Exception as exc:
+            log.warning(f"Could not scan Ollama models: {exc}")
+            return []
+
     def _refresh_ollama_models(self) -> None:
-        """Quét lại danh sách model Ollama trong background."""
         import threading
+
         def scan():
             models = self._scan_ollama_models()
             self._root.after(0, lambda: self._update_ollama_list(models))
+
         threading.Thread(target=scan, daemon=True).start()
         self._ollama_var.set("Scanning...")
 
     def _update_ollama_list(self, models: list) -> None:
+        defaults = [
+            "qwen2.5:1.5b-instruct-q4_K_M",
+            "qwen2.5:1.5b-instruct",
+            "qwen2.5:1.5b",
+        ]
         if not models:
-            models = ["qwen2.5:3b", "deepseek-v2:latest"]
-            self._log("Could not reach Ollama — showing defaults.")
+            models = defaults
+            self._log("Could not reach Ollama — showing default model names.")
         else:
-            self._log(f"Found {len(models)} Ollama model(s): {', '.join(models)}")
+            self._log(f"Found {len(models)} Ollama model(s).")
         self._ollama_combo["values"] = models
-        # Chọn model đầu tiên nếu chưa có lựa chọn
         current = self._ollama_var.get()
         if current not in models:
             self._ollama_combo.current(0)
+
+    def _preload_ollama_model(self) -> None:
+        """Preload selected Ollama model into GPU (background thread)."""
+        import threading
+        from config import TranslationConfig
+        from modules.ollama_client import OllamaClient
+
+        cfg = TranslationConfig(
+            ollama_base_url=self._ollama_url_var.get().strip(),
+            model=self._ollama_var.get().strip(),
+        )
+
+        def work():
+            self._root.after(0, lambda: self._log(f"Preloading {cfg.model} …"))
+            try:
+                client = OllamaClient(cfg)
+                client.check_reachable()
+                import asyncio
+                asyncio.run(client.preload())
+                self._root.after(
+                    0, lambda: self._log(f"Preload OK: {cfg.model} (keep_alive={cfg.keep_alive})")
+                )
+            except Exception as exc:
+                self._root.after(0, lambda: self._log(f"Preload failed: {exc}"))
+
+        threading.Thread(target=work, daemon=True).start()
 
     def _browse(self) -> None:
         path = filedialog.askopenfilename(
@@ -681,39 +766,53 @@ class ControlPanel:
     def _build_model_card(self, parent: tk.Widget) -> None:
         card = self._card(parent, "MODELS")
 
-        row1 = self._row(card, "Whisper model")
-        self._whisper_var = tk.StringVar(value="distil-small.en")
-        ttk.Combobox(
-            row1, textvariable=self._whisper_var,
-            values=["distil-small.en", "base", "small", "base.en", "tiny"],
+        row_dg_key = self._row(card, "Deepgram API key")
+        self._deepgram_key_var = tk.StringVar(value="")
+        ttk.Entry(
+            row_dg_key, textvariable=self._deepgram_key_var,
+            width=28, show="*"
+        ).pack(side="left")
+
+        row_dg_model = self._row(card, "Deepgram model")
+        self._deepgram_model_var = tk.StringVar(value="nova-2")
+        dg_combo = ttk.Combobox(
+            row_dg_model, textvariable=self._deepgram_model_var,
+            values=["nova-2", "nova-3", "nova", "enhanced", "base"],
             state="readonly", width=18
-        ).pack(side="left")
-
-        row2 = self._row(card, "Device")
-        self._device_var = tk.StringVar(value="cpu")
-        ttk.Combobox(
-            row2, textvariable=self._device_var,
-            values=["cpu", "cuda"],
-            state="readonly", width=10
-        ).pack(side="left")
-
-        row3 = self._row(card, "Ollama model")
-        self._ollama_var = tk.StringVar(value="")
-        self._ollama_combo = ttk.Combobox(
-            row3, textvariable=self._ollama_var,
-            state="readonly", width=22
         )
+        self._style_combobox(dg_combo)
+        dg_combo.pack(side="left")
+
+        row_ol_url = self._row(card, "Ollama URL")
+        self._ollama_url_var = tk.StringVar(value="http://localhost:11434")
+        ttk.Entry(row_ol_url, textvariable=self._ollama_url_var, width=28).pack(side="left")
+
+        row_ol_model = self._row(card, "Ollama model")
+        self._ollama_var = tk.StringVar(value="qwen2.5:1.5b-instruct-q4_K_M")
+        self._ollama_combo = ttk.Combobox(
+            row_ol_model, textvariable=self._ollama_var,
+            state="readonly", width=26
+        )
+        self._style_combobox(self._ollama_combo)
         self._ollama_combo.pack(side="left")
         ttk.Button(
-            row3, text="↺", style="Outline.TButton",
+            row_ol_model, text="↺", style="Outline.TButton",
             command=self._refresh_ollama_models, cursor="hand2", width=2
         ).pack(side="left", padx=4)
-        # Tự quét khi khởi động
-        self._root.after(800, self._refresh_ollama_models)
 
-        row4 = self._row(card, "Ollama URL")
-        self._ollama_url_var = tk.StringVar(value="http://localhost:11434")
-        ttk.Entry(row4, textvariable=self._ollama_url_var, width=22).pack(side="left")
+        row_ol_preload = self._row(card, "Preload model")
+        self._ollama_preload_on_start_var = tk.BooleanVar(value=True)
+        tk.Checkbutton(
+            row_ol_preload, text="On Start",
+            variable=self._ollama_preload_on_start_var, bg=CARD, fg=TEXT,
+            selectcolor=CARD, activebackground=CARD, activeforeground=ACCENT,
+        ).pack(side="left")
+        ttk.Button(
+            row_ol_preload, text="Preload now", style="Outline.TButton",
+            command=self._preload_ollama_model, cursor="hand2",
+        ).pack(side="left", padx=8)
+
+        self._root.after(800, self._refresh_ollama_models)
 
     # ── Status Card ───────────────────────────────────────────
 
@@ -722,8 +821,8 @@ class ControlPanel:
 
         modules = [
             ("AudioCapture", "audio"),
-            ("STTEngine",    "stt"),
-            ("Translator",   "translator"),
+            ("Deepgram",     "stt"),
+            ("Ollama",       "translator"),
             ("Formatter",    "formatter"),
         ]
         self._status_dots:  dict[str, StatusDot]  = {}
@@ -811,8 +910,8 @@ class ControlPanel:
         self._cfg.subtitle.text_color = self._text_color_var.get()
 
     def _build_transcript_pane(self, parent: tk.Widget) -> None:
-        frame = tk.Frame(parent, bg=DARK, padx=16, pady=4)
-        frame.pack(fill="x")
+        frame = tk.Frame(parent, bg=DARK)
+        frame.pack(fill="both", expand=True)
 
         header = tk.Frame(frame, bg=DARK)
         header.pack(fill="x")
@@ -825,7 +924,7 @@ class ControlPanel:
         ).pack(side="right")
 
         self._transcript_text = tk.Text(
-            frame, height=4,
+            frame, height=3,
             bg="#0A0F0A", fg="#00FF88",
             font=FONT_MONO,
             relief="flat", wrap="word",
@@ -853,7 +952,7 @@ class ControlPanel:
     # ── Log Pane ──────────────────────────────────────────────
 
     def _build_log_pane(self, parent: tk.Widget) -> None:
-        log_frame = tk.Frame(parent, bg=DARK, padx=16, pady=8)
+        log_frame = tk.Frame(parent, bg=DARK)
         log_frame.pack(fill="both", expand=True)
 
         header = tk.Frame(log_frame, bg=DARK)
@@ -866,18 +965,23 @@ class ControlPanel:
             command=self._clear_log, cursor="hand2",
         ).pack(side="right")
 
+        log_body = tk.Frame(log_frame, bg=DARK)
+        log_body.pack(fill="both", expand=True, pady=(4, 0))
+
+        sb = ttk.Scrollbar(log_body, orient="vertical")
+        sb.pack(side="right", fill="y")
+
         self._log_text = tk.Text(
-            log_frame, height=7,
+            log_body, height=5,
             bg="#0A0A0A", fg="#5FBF5F",
             font=FONT_MONO,
             relief="flat", wrap="word",
             insertbackground=ACCENT,
             selectbackground=ACCENT,
+            yscrollcommand=sb.set,
         )
-        self._log_text.pack(fill="both", expand=True, pady=(4, 0))
-
-        sb = ttk.Scrollbar(log_frame, orient="vertical", command=self._log_text.yview)
-        self._log_text.configure(yscrollcommand=sb.set)
+        self._log_text.pack(side="left", fill="both", expand=True)
+        sb.configure(command=self._log_text.yview)
 
         self._log("AI Subtitle Agent ready. Configure source and press Start.")
 
@@ -902,15 +1006,14 @@ class ControlPanel:
         # Audio
         cfg.audio.source_type = self._source_var.get()
         cfg.audio.source_path = self._path_var.get()
-        cfg.audio.noise_filter_enabled = self._noise_var.get()
+        # STT (Deepgram live)
+        cfg.stt.api_key = self._deepgram_key_var.get().strip()
+        cfg.stt.model   = self._deepgram_model_var.get()
 
-        # STT
-        cfg.stt.model_name = self._whisper_var.get()
-        cfg.stt.device     = self._device_var.get()
-
-        # Translation
-        cfg.translation.model           = self._ollama_var.get()
-        cfg.translation.ollama_base_url = self._ollama_url_var.get()
+        # Translation (Ollama)
+        cfg.translation.ollama_base_url = self._ollama_url_var.get().strip()
+        cfg.translation.model = self._ollama_var.get().strip()
+        cfg.translation.preload_on_start = self._ollama_preload_on_start_var.get()
 
         # Subtitle
         cfg.subtitle.font_size  = self._font_size_var.get()
@@ -923,6 +1026,9 @@ class ControlPanel:
         cfg = self._build_config()
         self._cfg = cfg
 
+        if not cfg.stt.api_key.strip():
+            self._log("Error: Deepgram API key is required.")
+            return
         self._pipeline = SubtitlePipeline(
             cfg=cfg,
             subtitle_cb=self._on_subtitle,
@@ -939,7 +1045,10 @@ class ControlPanel:
             dot.set_state("idle")
 
         self._pipeline.start()
-        self._log(f"Pipeline started — {cfg.audio.source_type} → {cfg.stt.model_name} → {cfg.translation.model}")
+        self._log(
+            f"Pipeline started — {cfg.audio.source_type} → "
+            f"Deepgram/{cfg.stt.model} → Ollama/{cfg.translation.model}"
+        )
 
     def _stop(self) -> None:
         if self._pipeline:

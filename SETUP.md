@@ -33,7 +33,7 @@
 │  ┌─────────────────────────────────────────────────────────┐   │
 │  │          MODULE 3 — LLM TRANSLATION (AGENT)             │   │
 │  │                                                         │   │
-│  │       Ollama → DeepSeek-V2 (local, MoE, free)          │   │
+│  │       Ollama → Qwen2.5-1.5B-Instruct (local GPU, Q4)   │   │
 │  │       System prompt: "max 2 lines, 40 chars each"       │   │
 │  │       temperature=0.1, num_predict=100                  │   │
 │  │               ↓                                         │   │
@@ -86,26 +86,28 @@ brew install ffmpeg
 ffmpeg -version   # verify
 ```
 
-### 3. Ollama + DeepSeek model
+### 3. Ollama + Qwen2.5 (GPU, quantized)
 ```bash
-# Install Ollama
-# Linux / macOS:
-curl -fsSL https://ollama.com/install.sh | sh
+# Install Ollama — https://ollama.com/download
+# Windows: install then run `ollama serve` in a terminal
 
-# Windows: https://ollama.com/download
+# Recommended: 1.5B instruct, Q4 quant (~1 GB VRAM, fast on GPU)
+ollama pull qwen2.5:1.5b-instruct-q4_K_M
 
-# Pull the model (run once; ~8 GB for v2:latest, or use a lighter variant)
-ollama pull deepseek-v2:latest
+# Alternatives:
+# ollama pull qwen2.5:1.5b-instruct
+# ollama pull qwen2.5:1.5b
 
-# Alternative lighter models:
-# ollama pull deepseek-r1:1.5b      ← ultra-fast, less accurate
-# ollama pull qwen2.5:3b            ← good translation quality, small
-
-# Start Ollama server
 ollama serve
 ```
 
-### 4. Python packages
+Quantization is selected by the **model tag** when you `pull` (GGUF Q4_K_M, etc.) — not in app code.
+
+### 4. Deepgram API (STT cloud)
+Get an API key at https://console.deepgram.com/ and enter it in the app UI.
+
+### 5. Python packages
+
 ```bash
 pip install -r requirements.txt
 ```
@@ -246,7 +248,8 @@ cfg.audio.source_path = "https://example.com/live/stream.m3u8"
 |------------------------------|--------------------------------------------------------|
 | `FFmpeg not found`           | Install FFmpeg, add to PATH                            |
 | `Ollama not reachable`       | Run `ollama serve` in a separate terminal              |
-| Model not found in Ollama    | `ollama pull deepseek-v2:latest`                       |
+| Model not found in Ollama    | `ollama pull qwen2.5:1.5b-instruct-q4_K_M`             |
+| Slow first translation     | Use **Preload now** or enable **On Start** in UI       |
 | Subtitles appear too fast    | Increase `subtitle.char_reading_speed` in config       |
 | High latency                 | Switch to smaller model, reduce `vad_max_silence_ms`   |
 | No audio on `system` source  | Install PulseAudio (Linux) or VB-Cable (Windows)       |

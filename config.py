@@ -15,50 +15,37 @@ class AudioConfig:
     """Technical & intelligent audio capture settings."""
 
     # --- Technical Capture (FFmpeg / sounddevice) ---
-    sample_rate: int = 16_000          # Hz; Whisper requires 16 kHz
+    sample_rate: int = 16_000          # Hz; Deepgram linear16 expects 16 kHz
     channels: int = 1                  # Mono
-    chunk_duration_ms: int = 30        # VAD frame size (10 / 20 / 30 ms allowed)
+    chunk_duration_ms: int = 30        # PCM frame size (10 / 20 / 30 ms)
     input_device: Optional[int] = None # None → system default; set index for specific mic
 
     # Input source:  "mic" | "system" | "file" | "stream"
     source_type: Literal["mic", "system", "file", "stream"] = "mic"
     source_path: str = ""              # Path or URL used when source_type ∈ {file, stream}
 
-    # --- Intelligent Capture (DeepFilterNet noise filter) ---
-    noise_filter_enabled: bool = False
-    df_post_filter: bool = True        # Extra clarity pass in DeepFilterNet
-
-    # VAD (webrtcvad): aggressiveness 0–3 (3 = most aggressive, rejects more non-speech)
-    vad_aggressiveness: int = 2
-    vad_padding_ms: int = 300          # Silence padding kept around speech segments
-    vad_min_speech_ms: int = 150       # Ignore bursts shorter than this
-    vad_max_silence_ms: int = 600   # End segment after N ms of silence
-
 
 # ─────────────────────────────────────────────
-#  SPEECH-TO-TEXT CONFIG
+#  SPEECH-TO-TEXT CONFIG (Deepgram live)
 # ─────────────────────────────────────────────
 @dataclass
 class STTConfig:
-    """Faster-Whisper settings tuned for ultra-low latency."""
+    """Deepgram live WebSocket STT — continuous PCM stream."""
 
-    # Model: "distil-small.en" (fastest) or "base" (more accurate)
-    model_name: str = "distil-small.en"
-    device: str = "cpu"                # "cuda" if GPU available
-    compute_type: str = "int8"         # int8 → fastest CPU; float16 → GPU
-
+    api_key: str = ""
+    model: str = "nova-2"
     language: str = "en"
-    beam_size: int = 3                 # Lower = faster; 1 = greedy
-    best_of: int = 1
-    word_timestamps: bool = True       # Required for subtitle sync
-    condition_on_previous_text: bool = False  # Avoid hallucination loops
+    sample_rate: int = 16_000
 
-    # Built-in Whisper VAD filter (second guard after webrtcvad)
-    vad_filter: bool = True
-    vad_min_silence_duration_ms: int = 500
+    interim_results: bool = True
+    punctuate: bool = True
+    smart_format: bool = True
+    endpointing_ms: int = 600          # Deepgram utterance endpointing (ms)
+    require_speech_final: bool = True  # Fewer partial finals → less downstream load
 
-    # Confidence gate — discard low-confidence segments
-    min_confidence: float = -1.0       # log-prob; -1.0 lets almost everything through
+    # Network
+    connect_timeout_s: float = 10.0
+    keepalive_interval_s: float = 8.0
 
 
 # ─────────────────────────────────────────────
@@ -66,34 +53,51 @@ class STTConfig:
 # ─────────────────────────────────────────────
 @dataclass
 class TranslationConfig:
-    """Ollama / DeepSeek-V2 translation settings."""
+    """Ollama local translation (Qwen2.5-1.5B-Instruct quant on GPU)."""
 
     ollama_base_url: str = "http://localhost:11434"
-    model: str = "deepseek-v2:latest"  # or "deepseek-r1:latest"
-    timeout_s: int = 60                 # Hard deadline per request
+    model: str = "qwen2.5:1.5b-instruct-q4_K_M"
+    timeout_s: int = 60
 
     target_language: str = "Vietnamese"
     max_lines: int = 2
     max_chars_per_line: int = 40
 
-    # System prompt injected into every request
     system_prompt: str = (
-    "You are a Vietnamese subtitle translator. "
-    "Translate the English text to Vietnamese ONLY. "
-    "STRICT RULES:\n"
-    "1. Output ONLY Vietnamese text. No Chinese, no English, no other language.\n"
-    "2. Maximum 2 lines, each line maximum 40 characters.\n"
-    "3. If the input is unclear or noisy, output your best guess in Vietnamese.\n"
-    "4. NO punctuation at line breaks. NO hyphens between words.\n"
-    "5. Output ONLY the subtitle text, nothing else."
-)
+        "You are a Vietnamese subtitle translator. "
+        "Translate the English text to Vietnamese ONLY. "
+        "STRICT RULES:\n"
+        "1. Output ONLY Vietnamese text. No Chinese, no English, no other language.\n"
+        "2. Maximum 2 lines, each line maximum 40 characters.\n"
+        "3. If the input is unclear or noisy, output your best guess in Vietnamese.\n"
+        "4. NO punctuation at line breaks. NO hyphens between words.\n"
+        "5. Output ONLY the subtitle text, nothing else."
+    )
 
-    # Ollama generation params
     temperature: float = 0.1
     top_p: float = 0.9
     num_predict: int = 100
+    keep_alive: int = -1               # Keep model loaded on GPU (-1 = indefinite)
+    preload_on_start: bool = True
+
     translation_max_retries: int = 2
     translation_retry_delay_s: float = 0.5
+
+    # Batching before Ollama (merge utterances; no cloud RPM limit)
+    debounce_s: float = 1.5
+    min_interval_s: float = 0.0        # Unused for local; kept for batcher compat
+    max_batch_words: int = 80
+
+
+# ─────────────────────────────────────────────
+#  SENTENCE GROUPER CONFIG
+# ─────────────────────────────────────────────
+@dataclass
+class GrouperConfig:
+    max_wait_s: float = 4.0
+    gap_threshold_s: float = 1.8
+    max_words: int = 50
+    flush_on_gap: bool = False         # Off for live Deepgram (gaps ≠ sentence end)
 
 
 # ─────────────────────────────────────────────
@@ -138,7 +142,7 @@ class SubtitleConfig:
 class PipelineConfig:
     """Async queue sizes and fault-tolerance settings."""
 
-    audio_queue_maxsize: int = 50      # Frames buffered before back-pressure
+    audio_queue_maxsize: int = 200     # PCM frames buffered before back-pressure
     stt_queue_maxsize: int = 20
     translation_queue_maxsize: int = 20
     subtitle_queue_maxsize: int = 30
@@ -146,7 +150,7 @@ class PipelineConfig:
     # If a module stalls longer than this, emit a warning
     module_timeout_s: float = 15.0
 
-    # Max retries for transient Ollama/network errors
+    # Max retries for transient API/network errors
     translation_max_retries: int = 2
     translation_retry_delay_s: float = 0.5
 
@@ -161,6 +165,7 @@ class AppConfig:
     audio: AudioConfig = field(default_factory=AudioConfig)
     stt: STTConfig = field(default_factory=STTConfig)
     translation: TranslationConfig = field(default_factory=TranslationConfig)
+    grouper: GrouperConfig = field(default_factory=GrouperConfig)
     subtitle: SubtitleConfig = field(default_factory=SubtitleConfig)
     pipeline: PipelineConfig = field(default_factory=PipelineConfig)
 

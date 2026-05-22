@@ -4,45 +4,22 @@
 # ─────────────────────────────────────────────────────────────────
 
 # ── Core audio capture ────────────────────────────────────────────
-sounddevice>=0.4.6          # microphone capture (cross-platform)
-numpy>=1.24.0               # audio array processing
+sounddevice>=0.4.6
+numpy>=1.24.0
 
-# ── Noise filtering ───────────────────────────────────────────────
-# DeepFilterNet (choose one based on your hardware):
-#   CPU + GPU:
-deepfilternet>=0.5.6        # DeepFilterNet v3 — best noise reduction
-#   Alternatively, the torch variant:
-# deepfilternet2            # older but lighter
+# ── Speech-to-Text (Deepgram live) ────────────────────────────────
+deepgram-sdk>=3.0.0
+websockets>=12.0
 
-# ── Voice Activity Detection ──────────────────────────────────────
-webrtcvad-wheels>=2.0.14    # pre-built wheels; or: pip install webrtcvad
-
-# ── Speech-to-Text ────────────────────────────────────────────────
-faster-whisper>=1.0.3       # CTranslate2-backed Whisper
-# Required for distil-small.en:
-# (faster-whisper pulls hf_hub automatically)
-
-# ── LLM translation client ────────────────────────────────────────
-aiohttp>=3.9.0              # async HTTP for Ollama calls (recommended)
-# aiohttp is optional; falls back to urllib.request if absent
-
-# ── Subtitle timestamp alignment (optional but recommended) ───────
-stable-ts>=2.17.0           # drift-corrected Whisper timestamps
+# ── Translation (Ollama local) ──────────────────────────────────
+aiohttp>=3.9.0
 
 # ── Utilities ─────────────────────────────────────────────────────
-dataclasses; python_version < "3.7"  # built-in for 3.7+
+dataclasses; python_version < "3.7"
 
 # ── NOTES ─────────────────────────────────────────────────────────
-# FFmpeg must be installed separately (NOT via pip):
-#   Ubuntu/Debian : sudo apt install ffmpeg
-#   macOS         : brew install ffmpeg
-#   Windows       : https://ffmpeg.org/download.html
-#
-# Ollama must be installed and running:
-#   https://ollama.com/download
-#   ollama pull deepseek-v2:latest
+# FFmpeg: https://ffmpeg.org/download.html
+# Ollama: https://ollama.com/download
 #   ollama serve
-#
-# GPU (CUDA) users — replace faster-whisper CPU compute_type:
-#   In config.py: device="cuda", compute_type="float16"
-#   Ensure torch+cuda is installed: pip install torch --index-url https://download.pytorch.org/whl/cu121
+#   ollama pull qwen2.5:1.5b-instruct-q4_K_M
+# Deepgram API key: enter in app UI

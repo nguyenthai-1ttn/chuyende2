@@ -78,13 +78,15 @@ class SentenceGrouperModule:
 
     def __init__(
         self,
-        max_wait_s: float = 1.8,
-        gap_threshold_s: float = 1.0,
-        max_words: int = 35,
+        max_wait_s: float = 4.0,
+        gap_threshold_s: float = 1.8,
+        max_words: int = 50,
+        flush_on_gap: bool = False,
     ):
         self._max_wait_s      = max_wait_s
         self._gap_threshold_s = gap_threshold_s
         self._max_words       = max_words
+        self._flush_on_gap    = flush_on_gap
 
         self._buffer: List[TranscriptSegment] = []
         self._buffer_start_time: float = 0.0
@@ -166,8 +168,8 @@ class SentenceGrouperModule:
         if _SENTENCE_END_RE.search(text) and not _ABBREV_RE.search(text):
             return True
 
-        # 2. Speech gap before the latest segment
-        if len(self._buffer) >= 2:
+        # 2. Speech gap (optional — often noisy with live STT)
+        if self._flush_on_gap and len(self._buffer) >= 2:
             prev = self._buffer[-2]
             if (latest.start - prev.end) >= self._gap_threshold_s:
                 return True
