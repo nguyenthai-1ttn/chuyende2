@@ -41,7 +41,7 @@ class STTConfig:
     punctuate: bool = True
     smart_format: bool = True
     endpointing_ms: int = 600          # Deepgram utterance endpointing (ms)
-    require_speech_final: bool = True  # Fewer partial finals → less downstream load
+    require_speech_final: bool = False  # Let is_final drive segments instead
 
     # Network
     connect_timeout_s: float = 10.0
@@ -84,7 +84,7 @@ class TranslationConfig:
     translation_retry_delay_s: float = 0.5
 
     # Batching before Ollama (merge utterances; no cloud RPM limit)
-    debounce_s: float = 1.5
+    debounce_s: float = 0.8
     min_interval_s: float = 0.0        # Unused for local; kept for batcher compat
     max_batch_words: int = 80
 

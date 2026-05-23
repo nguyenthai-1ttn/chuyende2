@@ -18,6 +18,8 @@ import time
 from dataclasses import dataclass, field
 from typing import List, Optional, Union
 
+from sklearn import base
+
 from config import TranslationConfig
 from modules.ollama_client import OllamaClient
 from modules.stt_engine import TranscriptSegment, WordTimestamp
@@ -127,12 +129,14 @@ class TranslatorModule:
                 self._vi_context.pop(0)
 
     def _build_prompt(self, segment) -> str:
-        parts: List[str] = []
+        return segment.text
+
+    def _build_system_prompt(self) -> str:
+        base = self._cfg.system_prompt
         if self._vi_context:
-            ctx_str = " | ".join(self._vi_context)
-            parts.append(f"[Phụ đề trước: {ctx_str}]")
-        parts.append(segment.text)
-        return "\n".join(parts)
+            ctx = " | ".join(self._vi_context)
+            base += f"\n\nPhụ đề vừa hiển thị (dùng để giữ ngữ cảnh, KHÔNG in lại): {ctx}"
+        return base
 
     async def _translate_with_retry(self, segment) -> Optional[TranslatedSubtitle]:
         cfg = self._cfg
@@ -152,7 +156,7 @@ class TranslatorModule:
                 translated = await asyncio.wait_for(
                     client.generate(
                         prompt=prompt,
-                        system=cfg.system_prompt,
+                        system=self._build_system_prompt(),   # ← đổi cfg.system_prompt thành này
                         temperature=cfg.temperature,
                         top_p=cfg.top_p,
                         num_predict=cfg.num_predict,

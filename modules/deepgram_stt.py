@@ -184,7 +184,14 @@ class DeepgramSTTEngine:
         if not text:
             return
 
-        is_final = bool(message.is_final)
+        is_final    = bool(message.is_final)
+        speech_final = getattr(message, "speech_final", None)
+
+        # ── DEBUG: log mọi message để thấy luồng dữ liệu ──────────
+        log.info(
+            f"DG msg | is_final={is_final} | speech_final={speech_final} "
+            f"| require_sf={self._cfg.require_speech_final} | text='{text[:50]}'"
+        )
 
         if transcript_cb and not is_final:
             try:
@@ -196,11 +203,12 @@ class DeepgramSTTEngine:
             return
 
         if self._cfg.require_speech_final:
-            speech_final = message.speech_final
             if speech_final is False:
+                log.info(f"Dropped: require_speech_final=True but speech_final=False")
                 return
 
         if self._is_duplicate_final(text):
+            log.info(f"Dropped duplicate: '{text[:50]}'")
             return
 
         if transcript_cb:
@@ -214,7 +222,7 @@ class DeepgramSTTEngine:
         avg_conf = sum(confidences) / len(confidences) if confidences else 1.0
 
         abs_start = self._stream_time_offset + float(message.start)
-        abs_end = abs_start + float(message.duration)
+        abs_end   = abs_start + float(message.duration)
 
         self._segment_counter += 1
         segment = TranscriptSegment(
@@ -227,9 +235,9 @@ class DeepgramSTTEngine:
         )
 
         await output_queue.put(segment)
-        log.debug(
-            f"[seg#{segment.segment_id}] {segment.start:.2f}s–{segment.end:.2f}s "
-            f"| \"{text[:60]}\""
+        log.info(
+            f"[seg#{segment.segment_id}] PUSHED to queue "
+            f"{segment.start:.2f}s–{segment.end:.2f}s | \"{text[:60]}\""
         )
 
     def _is_duplicate_final(self, text: str) -> bool:
