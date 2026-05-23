@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 from typing import List, Optional, Tuple
 
 from config import SubtitleConfig
-from modules.translator import TranslatedSubtitle
+from modules.groq_translator import TranslatedSubtitle
 from modules.stt_engine import WordTimestamp
 from utils.logger import get_logger
 

@@ -11,15 +11,25 @@ numpy>=1.24.0
 deepgram-sdk>=3.0.0
 websockets>=12.0
 
-# ── Translation (Ollama local) ──────────────────────────────────
-aiohttp>=3.9.0
+# ── LLM Translation — Groq ────────────────────────────────────────
+groq>=0.9.0
+
+# ── LLM Translation — Google Gemini ──────────────────────────────
+google-generativeai>=0.8.0
 
 # ── Utilities ─────────────────────────────────────────────────────
 dataclasses; python_version < "3.7"
 
 # ── NOTES ─────────────────────────────────────────────────────────
 # FFmpeg: https://ffmpeg.org/download.html
-# Ollama: https://ollama.com/download
-#   ollama serve
-#   ollama pull qwen2.5:1.5b-instruct-q4_K_M
-# Deepgram API key: enter in app UI
+#
+# Groq API key:   https://console.groq.com/
+#   → Models: llama-3.1-8b-instant (default), qwen/qwen3-32b, etc.
+#   → Free tier: 30 RPM
+#
+# Gemini API key: https://aistudio.google.com/apikey
+#   → Models: gemini-2.0-flash (default), gemini-2.0-flash-lite, etc.
+#   → Free tier: 15 RPM, 1M tokens/day
+#
+# Deepgram API key: https://console.deepgram.com/
+#   → Enter key in app UI

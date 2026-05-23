@@ -4,7 +4,7 @@ All module settings live here for easy tuning without touching core logic.
 """
 
 from dataclasses import dataclass, field
-from typing import Optional, Literal
+from typing import Optional, Literal, List
 
 
 # ─────────────────────────────────────────────
@@ -14,15 +14,13 @@ from typing import Optional, Literal
 class AudioConfig:
     """Technical & intelligent audio capture settings."""
 
-    # --- Technical Capture (FFmpeg / sounddevice) ---
-    sample_rate: int = 16_000          # Hz; Deepgram linear16 expects 16 kHz
-    channels: int = 1                  # Mono
-    chunk_duration_ms: int = 30        # PCM frame size (10 / 20 / 30 ms)
-    input_device: Optional[int] = None # None → system default; set index for specific mic
+    sample_rate: int = 16_000
+    channels: int = 1
+    chunk_duration_ms: int = 30
+    input_device: Optional[int] = None
 
-    # Input source:  "mic" | "system" | "file" | "stream"
     source_type: Literal["mic", "system", "file", "stream"] = "mic"
-    source_path: str = ""              # Path or URL used when source_type ∈ {file, stream}
+    source_path: str = ""
 
 
 # ─────────────────────────────────────────────
@@ -40,29 +38,43 @@ class STTConfig:
     interim_results: bool = True
     punctuate: bool = True
     smart_format: bool = True
-    endpointing_ms: int = 600          # Deepgram utterance endpointing (ms)
-    require_speech_final: bool = False  # Let is_final drive segments instead
+    endpointing_ms: int = 600
+    require_speech_final: bool = False
 
-    # Network
     connect_timeout_s: float = 10.0
     keepalive_interval_s: float = 8.0
 
 
 # ─────────────────────────────────────────────
-#  TRANSLATION (LLM) CONFIG
+#  GROQ TRANSLATION CONFIG
 # ─────────────────────────────────────────────
 @dataclass
-class TranslationConfig:
-    """Ollama local translation (Qwen2.5-1.5B-Instruct quant on GPU)."""
+class GroqConfig:
+    """Groq cloud LLM — 30 RPM free tier."""
 
-    ollama_base_url: str = "http://localhost:11434"
-    model: str = "qwen2.5:1.5b-instruct-q4_K_M"
-    timeout_s: int = 60
+    api_key: str = ""
+    model: str = "llama-3.1-8b-instant"
+    available_models: List[str] = field(default_factory=lambda: [
+        "llama-3.1-8b-instant",
+        "llama-3.3-70b-versatile",
+        "meta-llama/llama-4-scout-17b-16e-instruct",
+        "qwen/qwen3-32b",
+        "openai/gpt-oss-20b",
+        "openai/gpt-oss-120b",
+    ])
 
-    target_language: str = "Vietnamese"
-    max_lines: int = 2
-    max_chars_per_line: int = 40
+    # Rate limiting (30 RPM → safe at ~2s interval)
+    min_interval_s: float = 2.0
+    debounce_s: float = 0.8
+    max_batch_words: int = 60
+    max_retries: int = 3
 
+    # Generation
+    temperature: float = 0.1
+    max_tokens: int = 150
+    timeout_s: int = 30
+
+    # Subtitle format
     system_prompt: str = (
         "You are a Vietnamese subtitle translator. "
         "Translate the English text to Vietnamese ONLY. "
@@ -73,20 +85,49 @@ class TranslationConfig:
         "4. NO punctuation at line breaks. NO hyphens between words.\n"
         "5. Output ONLY the subtitle text, nothing else."
     )
+    max_lines: int = 2
+    max_chars_per_line: int = 40
 
-    temperature: float = 0.1
-    top_p: float = 0.9
-    num_predict: int = 100
-    keep_alive: int = -1               # Keep model loaded on GPU (-1 = indefinite)
-    preload_on_start: bool = True
 
-    translation_max_retries: int = 2
-    translation_retry_delay_s: float = 0.5
+# ─────────────────────────────────────────────
+#  GEMINI TRANSLATION CONFIG
+# ─────────────────────────────────────────────
+@dataclass
+class GeminiConfig:
+    """Google Gemini cloud LLM — 15 RPM free tier."""
 
-    # Batching before Ollama (merge utterances; no cloud RPM limit)
-    debounce_s: float = 0.8
-    min_interval_s: float = 0.0        # Unused for local; kept for batcher compat
+    api_key: str = ""
+    model: str = "gemini-2.0-flash"
+    available_models: List[str] = field(default_factory=lambda: [
+        "gemini-2.0-flash",
+        "gemini-2.0-flash-lite",
+        "gemini-1.5-flash",
+    ])
+
+    # Rate limiting (15 RPM → safe at ~4s interval)
+    min_interval_s: float = 4.0
+    debounce_s: float = 1.5
     max_batch_words: int = 80
+    max_retries: int = 3
+
+    # Generation
+    temperature: float = 0.1
+    max_tokens: int = 150
+    timeout_s: int = 30
+
+    # Subtitle format
+    system_prompt: str = (
+        "You are a Vietnamese subtitle translator. "
+        "Translate the English text to Vietnamese ONLY. "
+        "STRICT RULES:\n"
+        "1. Output ONLY Vietnamese text. No Chinese, no English, no other language.\n"
+        "2. Maximum 2 lines, each line maximum 40 characters.\n"
+        "3. If the input is unclear or noisy, output your best guess in Vietnamese.\n"
+        "4. NO punctuation at line breaks. NO hyphens between words.\n"
+        "5. Output ONLY the subtitle text, nothing else."
+    )
+    max_lines: int = 2
+    max_chars_per_line: int = 40
 
 
 # ─────────────────────────────────────────────
@@ -97,7 +138,7 @@ class GrouperConfig:
     max_wait_s: float = 4.0
     gap_threshold_s: float = 1.8
     max_words: int = 50
-    flush_on_gap: bool = False         # Off for live Deepgram (gaps ≠ sentence end)
+    flush_on_gap: bool = False
 
 
 # ─────────────────────────────────────────────
@@ -107,32 +148,28 @@ class GrouperConfig:
 class SubtitleConfig:
     """Visual styling and timing for the subtitle overlay."""
 
-    # --- Timing ---
-    min_display_ms: int = 1_200        # Never flash shorter than this
-    max_display_ms: int = 6_000        # Auto-clear after this
+    min_display_ms: int = 1_200
+    max_display_ms: int = 6_000
     fade_in_ms: int = 150
     fade_out_ms: int = 300
-    char_reading_speed: int = 20       # ms per character (reading time estimate)
+    char_reading_speed: int = 20
 
-    # --- Typography ---
-    font_family: str = "Arial"         # Fallback; overridden in UI if richer font present
+    font_family: str = "Arial"
     font_size: int = 26
     font_weight: str = "bold"
 
-    # --- Colors ---
     text_color: str = "#FFFFFF"
     text_shadow_color: str = "#000000"
     bg_color: str = "#1A1A1A"
-    bg_opacity: float = 0.75           # 0.0 = fully transparent, 1.0 = opaque
+    bg_opacity: float = 0.75
 
-    # --- Layout ---
     position: Literal["bottom", "top"] = "bottom"
-    margin_bottom: int = 60            # px from screen edge
-    max_width_ratio: float = 0.80      # Subtitle box = 80 % of screen width
+    margin_bottom: int = 60
+    max_width_ratio: float = 0.80
     padding_x: int = 20
     padding_y: int = 10
     line_spacing: int = 6
-    max_chars_per_line: int = 40 
+    max_chars_per_line: int = 40
 
 
 # ─────────────────────────────────────────────
@@ -142,19 +179,12 @@ class SubtitleConfig:
 class PipelineConfig:
     """Async queue sizes and fault-tolerance settings."""
 
-    audio_queue_maxsize: int = 200     # PCM frames buffered before back-pressure
+    audio_queue_maxsize: int = 200
     stt_queue_maxsize: int = 20
     translation_queue_maxsize: int = 20
     subtitle_queue_maxsize: int = 30
-
-    # If a module stalls longer than this, emit a warning
     module_timeout_s: float = 15.0
-
-    # Max retries for transient API/network errors
-    translation_max_retries: int = 2
-    translation_retry_delay_s: float = 0.5
-
-    debug: bool = False                # Verbose pipeline logging
+    debug: bool = False
 
 
 # ─────────────────────────────────────────────
@@ -164,11 +194,14 @@ class PipelineConfig:
 class AppConfig:
     audio: AudioConfig = field(default_factory=AudioConfig)
     stt: STTConfig = field(default_factory=STTConfig)
-    translation: TranslationConfig = field(default_factory=TranslationConfig)
+    groq: GroqConfig = field(default_factory=GroqConfig)
+    gemini: GeminiConfig = field(default_factory=GeminiConfig)
     grouper: GrouperConfig = field(default_factory=GrouperConfig)
     subtitle: SubtitleConfig = field(default_factory=SubtitleConfig)
     pipeline: PipelineConfig = field(default_factory=PipelineConfig)
 
+    # Which LLM provider is active: "groq" | "gemini"
+    active_provider: str = "groq"
 
-# Singleton-style default used across the app
+
 DEFAULT_CONFIG = AppConfig()

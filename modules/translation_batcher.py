@@ -17,7 +17,7 @@ import asyncio
 import re
 from typing import List, Optional
 
-from config import TranslationConfig
+from config import GroqConfig
 from modules.sentence_grouper import GroupedSegment
 from utils.logger import get_logger
 
@@ -34,7 +34,7 @@ class TranslationBatcherModule:
     max_batch_words : Split early if the buffer exceeds this word count.
     """
 
-    def __init__(self, cfg: TranslationConfig):
+    def __init__(self, cfg):
         self._debounce_s = cfg.debounce_s
         self._max_batch_words = cfg.max_batch_words
         self._buffer: List[GroupedSegment] = []
